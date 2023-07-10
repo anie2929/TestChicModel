@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chicken Distress Classification</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>Chicken Distress Classification</h1>
+    <canvas id="waveform" width="600" height="200"></canvas>
+    <button id="startButton" onclick="startRecording()">Start</button>
+    <div id="result"></div>
+
+    <script>
+        let recorder;
+        let stream;
+        let audioContext;
+        let scriptProcessor;
+        let analyser;
+        let canvas;
+        let canvasContext;
+        let animationId;
+        let audioDataArray = [];
+
+        async function startRecording() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                scriptProcessor.addEventListener('audioprocess', processAudio);
+
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                source.connect(analyser);
+                analyser.connect(scriptProcessor);
+                scriptProcessor.connect(audioContext.destination);
+
+                canvas = document.getElementById('waveform');
+                canvasContext = canvas.getContext('2d');
+                canvasContext.clearRect(0, 0, canvas.width, canvas.height);
+
+                drawWaveform();
+
+                // Start sending audio data for real-time classification
+                setInterval(sendAudioData, 1000);
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        function processAudio(event) {
+            const audioData = event.inputBuffer.getChannelData(0);
+            audioDataArray.push(...audioData);
+            // Do any necessary processing of the audio data here
+        }
+
+        function sendAudioData() {
+            const bufferLength = scriptProcessor.bufferSize;
+            const audioData = audioDataArray.splice(0, bufferLength);
+
+            fetch('/classify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ audio_data: Array.from(audioData) }),
+            })
+                .then(response => response.text())
+                .then(result => {
+                    document.getElementById('result').textContent = 'Prediction: ' + result;
+                })
+                .catch(error => {
+                    console.error(error);
+                });
+        }
+
+        function drawWaveform() {
+            const bufferLength = analyser.fftSize;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteTimeDomainData(dataArray);
+
+            canvasContext.fillStyle = 'rgb(255, 255, 255)';
+            canvasContext.fillRect(0, 0, canvas.width, canvas.height);
+
+            canvasContext.lineWidth = 2;
+            canvasContext.strokeStyle = 'rgb(0, 0, 0)';
+            canvasContext.beginPath();
+
+            const sliceWidth = canvas.width * 1.0 / bufferLength;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = v * canvas.height / 2;
+
+                if (i === 0) {
+                    canvasContext.moveTo(x, y);
+                } else {
+                    canvasContext.lineTo(x, y);
+                }
+
+                x += sliceWidth;
+            }
+
+            canvasContext.lineTo(canvas.width, canvas.height / 2);
+            canvasContext.stroke();
+
+            requestAnimationFrame(drawWaveform);
+        }
+
+    </script>
+</body>
+</html>
